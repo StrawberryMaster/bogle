@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>bogle</title>
+    <meta name="description" content="A simple tool for projecting maps">
+    <meta name="author" content="StrawberryMaster">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#c3302a">
+    <meta name="keywords" content="map, projection, cartography, geography, geospatial, gis">
+    <meta name="og:title" content="bogle">
+    <meta name="og:description" content="A simple tool for projecting maps">
+    <meta name="og:type" content="website">
+    <meta name="og:url" content="https://strawberrymaster.github.io/bogle/">
+    <meta name="og:site_name" content="bogle">
+    <link rel="icon" href="images/favicon.png">
+    <link rel="stylesheet" href="styles/style.css">
+</head>
+
+<body>
+    <h1>bogle...</h1>
+    <div id="controls">
+        <div class="control-group">
+            <label for="upload">Upload map:</label>
+            <input type="file" id="upload" accept="image/*">
+        </div>
+
+        <div class="control-group">
+            <label for="projection">Projection:</label>
+            <select id="projection" disabled>
+                <option value="ortho" selected>Orthographic</option>
+                <option value="other1">Other Projection 1</option>
+                <option value="other2">Other Projection 2</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="centerLon">Center Lon (°):</label>
+            <input type="number" id="centerLon" value="-74.01" step="0.1" style="width:80px;">
+            <label for="centerLat">Center Lat (°):</label>
+            <input type="number" id="centerLat" value="40.71" step="0.1" style="width:80px;">
+            <label for="edgeAngle">Edge angle (°) (≤90.0):</label>
+            <input type="number" id="edgeAngle" value="90" step="1" style="width:60px;">
+            <button id="updateBtn">Update</button>
+        </div>
+
+        <div class="control-group">
+            <label for="graticuleLonSpacing">Spacing (°E-W):</label>
+            <input type="number" id="graticuleLonSpacing" value="30" step="1" style="width:60px;">
+            <label for="graticuleLatSpacing">Spacing (°N-S):</label>
+            <input type="number" id="graticuleLatSpacing" value="30" step="1" style="width:60px;">
+            <label for="graticuleOffset">Offset Parallels (°):</label>
+            <input type="number" id="graticuleOffset" value="0" step="1" style="width:60px;">
+        </div>
+
+        <div class="control-group">
+            <label for="graticuleStyle">Stroke:</label>
+            <select id="graticuleStyle">
+                <option value="none">None</option>
+                <option value="solid" selected>Solid</option>
+                <option value="dash">Dash</option>
+                <option value="dot">Dot</option>
+                <option value="dashdot">Dot-Dash</option>
+            </select>
+            <label for="graticuleColor">Color:</label>
+            <input type="color" id="graticuleColor" value="#ffffff">
+            <label for="graticuleLineWidth">Weight:</label>
+            <input type="number" id="graticuleLineWidth" value="1" step="1" style="width:40px;">
+        </div>
+    </div>
+
+    <canvas id="canvas" width="600" height="600"></canvas>
+
+    <script src="scripts/projector.js"></script>
+</body>
+
+</html>
