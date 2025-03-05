@@ -76,12 +76,132 @@ class OrthographicProjection extends Projection {
     }
 }
 
+// mercator projection
+class MercatorProjection extends Projection {
+    constructor(centerLat, centerLon, maxLat) {
+        const clampedMaxLat = Math.min(Math.max(maxLat, 45), 89.9);
+        super(centerLat, centerLon, clampedMaxLat);
+        this.maxLatRad = toRad(clampedMaxLat);
+    }
+
+    forward(lat, lon, canvasWidth, canvasHeight) {
+        lat = Math.max(Math.min(lat, this.maxLatRad), -this.maxLatRad);
+
+        lon = normalizeLon(lon);
+
+        const mercatorY = Math.log(Math.tan(Math.PI / 4 + lat / 2));
+        const maxMercatorY = Math.log(Math.tan(Math.PI / 4 + this.maxLatRad / 2));
+
+        const scale = Math.min(canvasWidth, canvasHeight) / 2;
+
+        const x = canvasWidth / 2 + scale * (lon - this.centerLon) / maxMercatorY;
+
+        const y = canvasHeight / 2 - scale * mercatorY / maxMercatorY;
+
+        return { x, y, visible: true };
+    }
+
+    inverse(x, y, canvasWidth, canvasHeight) {
+        const scale = Math.min(canvasWidth, canvasHeight) / 2;
+        const maxMercatorY = Math.log(Math.tan(Math.PI / 4 + this.maxLatRad / 2));
+
+        const lon = this.centerLon + ((x - canvasWidth / 2) / scale) * maxMercatorY;
+
+        const mercatorY = -((y - canvasHeight / 2) / scale) * maxMercatorY;
+        const lat = 2 * Math.atan(Math.exp(mercatorY)) - Math.PI / 2;
+
+        if (lat < -this.maxLatRad || lat > this.maxLatRad) {
+            return { visible: false };
+        }
+
+        return { lat, lon, visible: true };
+    }
+}
+
+// stereographic projection
+class StereographicProjection extends Projection {
+    constructor(centerLat, centerLon, edgeAngle) {
+        const clampedEdgeAngle = Math.min(Math.max(edgeAngle, 0), 150);
+        super(centerLat, centerLon, clampedEdgeAngle);
+    }
+
+    forward(lat, lon, canvasWidth, canvasHeight) {
+        const R = Math.min(canvasWidth, canvasHeight) / 2;
+        const sinLat = Math.sin(lat);
+        const cosLat = Math.cos(lat);
+        const sinLat0 = Math.sin(this.centerLat);
+        const cosLat0 = Math.cos(this.centerLat);
+        const dLon = lon - this.centerLon;
+
+        const cosC = sinLat0 * sinLat + cosLat0 * cosLat * Math.cos(dLon);
+
+        if (cosC < -0.0001) {
+            return { visible: false };
+        }
+
+        const k = 2 / (1 + cosC);
+
+        const c = Math.acos(Math.min(Math.max(cosC, -1), 1));
+        if (c > this.edgeAngleRad) {
+            return { visible: false };
+        }
+
+        const xFactor = cosLat * Math.sin(dLon);
+        const yFactor = cosLat0 * sinLat - sinLat0 * cosLat * Math.cos(dLon);
+
+        const scaleFactor = R * (k / 2) * (Math.PI / this.edgeAngleRad);
+
+        const x = canvasWidth / 2 + scaleFactor * xFactor;
+        const y = canvasHeight / 2 - scaleFactor * yFactor;
+
+        return { x, y, visible: true };
+    }
+
+    inverse(x, y, canvasWidth, canvasHeight) {
+        const R = Math.min(canvasWidth, canvasHeight) / 2;
+        const xPrime = x - canvasWidth / 2;
+        const yPrime = -(y - canvasHeight / 2);
+
+        const rho = Math.sqrt(xPrime * xPrime + yPrime * yPrime);
+
+        const maxRho = R * (Math.PI / this.edgeAngleRad) * 2;
+        if (rho > maxRho) {
+            return { visible: false };
+        }
+
+        const c = 2 * Math.atan2(rho, 2 * R * (Math.PI / this.edgeAngleRad));
+
+        if (rho < 1e-10) {
+            return { lat: this.centerLat, lon: this.centerLon, visible: true };
+        }
+
+        const sinC = Math.sin(c);
+        const cosC = Math.cos(c);
+        const sinLat0 = Math.sin(this.centerLat);
+        const cosLat0 = Math.cos(this.centerLat);
+
+        const lat = Math.asin(cosC * sinLat0 + (yPrime * sinC * cosLat0) / rho);
+
+        const lon = this.centerLon + Math.atan2(
+            xPrime * sinC,
+            rho * cosLat0 * cosC - yPrime * sinLat0 * sinC
+        );
+
+        return { lat, lon: normalizeLon(lon), visible: true };
+    }
+}
+
 // this is a factory function that creates a projection based on the type
 // should be quite useful when adding more projections
-function createProjection(type, centerLat, centerLon, edgeAngle) {
+function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat) {
     switch (type) {
-        case 'ortho': default:
-            return new OrthographicProjection(centerLat, centerLon, edgeAngle);
+        case 'mercator':
+            return new MercatorProjection(centerLat, centerLon, edgeAngleOrMaxLat);
+        case 'stereo':
+            return new StereographicProjection(centerLat, centerLon, edgeAngleOrMaxLat);
+        case 'ortho':
+        default:
+            return new OrthographicProjection(centerLat, centerLon, edgeAngleOrMaxLat);
     }
 }
 
@@ -89,8 +209,8 @@ function createProjection(type, centerLat, centerLon, edgeAngle) {
 class Graticule {
     constructor(projection, options) {
         this.projection = projection;
-        this.lonSpacing = options.lonSpacing || 30;
-        this.latSpacing = options.latSpacing || 30;
+        this.lonSpacing = options.lonSpacing || 15;
+        this.latSpacing = options.latSpacing || 15;
         this.offset = options.offset || 0;
         this.strokeStyle = options.strokeStyle || 'solid';
         this.color = options.color || '#ffffff';
@@ -194,6 +314,36 @@ let projectionType = projectionSelect.value;
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
 
+// so we can update the projection type and edge angle
+projectionSelect.addEventListener('change', function () {
+    projectionType = this.value;
+
+    const edgeLabel = document.querySelector('label[for="edgeAngle"]');
+
+    if (projectionType === 'mercator') {
+        // mercator
+        edgeLabel.textContent = 'Max latitude (°) (45-89.9°):';
+        edgeAngleInput.min = 45;
+        edgeAngleInput.max = 89.9;
+        if (parseFloat(edgeAngleInput.value) < 45) edgeAngleInput.value = 45;
+        if (parseFloat(edgeAngleInput.value) > 89.9) edgeAngleInput.value = 89.9;
+    } else if (projectionType === 'stereo') {
+        // stereographic
+        edgeLabel.textContent = 'Edge angle (°) (≤150.0°):';
+        edgeAngleInput.min = 0;
+        edgeAngleInput.max = 150;
+        if (parseFloat(edgeAngleInput.value) > 150) edgeAngleInput.value = 150;
+    } else {
+        // orthographic & others 
+        edgeLabel.textContent = 'Edge angle (°) (≤90.0):';
+        edgeAngleInput.min = 0;
+        edgeAngleInput.max = 90;
+        if (parseFloat(edgeAngleInput.value) > 90) edgeAngleInput.value = 90;
+    }
+
+    updateAndDraw();
+});
+
 // @todo: we could add some debouncing here ig?
 let debounceTimer;
 function debounceDraw() {
@@ -284,26 +434,33 @@ function drawEverything() {
     projCtx.putImageData(output, 0, 0);
 
     // draw the projected image onto the main canvas
-    // right now this only works for the orthographic projection
     ctx.clearRect(0, 0, width, height);
-    ctx.save();
-    ctx.beginPath();
-    const R = Math.min(width, height) / 2;
-    ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
-    ctx.clip();
-    ctx.drawImage(projCanvas, 0, 0);
-    ctx.restore();
-    // outline
-    ctx.beginPath();
-    ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+
+    // adds a circular mask for orthographic and stereographic projections
+    if (projectionType === 'ortho' || projectionType === 'stereo') {
+        ctx.save();
+        ctx.beginPath();
+        const R = Math.min(width, height) / 2;
+        ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
+        ctx.clip();
+        ctx.drawImage(projCanvas, 0, 0);
+        ctx.restore();
+
+        // outline
+        ctx.beginPath();
+        ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    } else {
+        // for other projections, just draw the image
+        ctx.drawImage(projCanvas, 0, 0);
+    }
 
     // graticules! on top
     const graticuleOptions = {
-        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 30,
-        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 30,
+        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 15,
+        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 15,
         offset: parseFloat(graticuleOffsetInput.value) || 0,
         color: graticuleColorInput.value || '#ffffff',
         lineWidth: parseFloat(graticuleLineWidthInput.value) || 1,
