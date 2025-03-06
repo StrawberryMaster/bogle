@@ -29,26 +29,47 @@ const projectionTypes = {
     }
 };
 
+const projectionCache = new Map();
+const MAX_CACHE_SIZE = 20;
+
 // this is a factory function that creates a projection based on the type
 // should be quite useful when adding more projections
 function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat) {
-    const projectionType = projectionTypes[type] || projectionTypes['ortho'];
-    return new projectionType.class(centerLat, centerLon, edgeAngleOrMaxLat);
+    type = projectionTypes[type] ? type : 'ortho';
+    centerLat = Number.isFinite(centerLat) ? centerLat : 0;
+    centerLon = Number.isFinite(centerLon) ? centerLon : 0;
+    edgeAngleOrMaxLat = Number.isFinite(edgeAngleOrMaxLat) ? edgeAngleOrMaxLat : 90;
+
+    const cacheKey = `${type}:${centerLat.toFixed(2)}:${centerLon.toFixed(2)}:${edgeAngleOrMaxLat.toFixed(2)}`;
+
+    if (projectionCache.has(cacheKey)) {
+        return projectionCache.get(cacheKey);
+    }
+
+    const projectionType = projectionTypes[type] || projectionTypes.ortho;
+    const projection = new projectionType.class(centerLat, centerLon, edgeAngleOrMaxLat);
+
+    if (projectionCache.size >= MAX_CACHE_SIZE) {
+        const oldestKey = projectionCache.keys().next().value;
+        projectionCache.delete(oldestKey);
+    }
+
+    projectionCache.set(cacheKey, projection);
+    return projection;
 }
 
 // ─────────── Global variables and offscreen canvases ─────────────
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-
 let originalImage = null;
+
 // we reuse this offscreen canvas for rendering the original image
-let offCanvas = document.getElementById('offCanvas');
-if (!offCanvas) {
-    offCanvas = document.createElement('canvas');
-    offCanvas.id = 'offCanvas';
-    offCanvas.style.display = 'none';
-    document.body.appendChild(offCanvas);
-}
+const offCanvas = document.createElement('canvas');
+offCanvas.style.display = 'none';
+document.body.appendChild(offCanvas);
+
+const projCanvas = document.createElement('canvas');
+const projCtx = projCanvas.getContext('2d');
 
 // ─────────── DOM elements ─────────────
 const uploadInput = document.getElementById('upload');
@@ -134,52 +155,52 @@ function drawEverything() {
     const width = canvas.width;
     const height = canvas.height;
 
-    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    if (projCanvas.width !== width || projCanvas.height !== height) {
+        projCanvas.width = width;
+        projCanvas.height = height;
+    }
 
-    const projCanvas = document.createElement('canvas');
-    projCanvas.width = width;
-    projCanvas.height = height;
-    const projCtx = projCanvas.getContext('2d');
+    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
 
     // preparing an ImageData buffer for the projected image
     const output = projCtx.createImageData(width, height);
-    const data = output.data;
+    const data32 = new Uint32Array(output.data.buffer);
+
     const offCtx = offCanvas.getContext('2d');
     const offImageData = offCtx.getImageData(0, 0, originalImage.width, originalImage.height);
-    const offData = offImageData.data;
+    const offData32 = new Uint32Array(offImageData.data.buffer);
 
-    // for every pixel on the output canvas, use the inverse projection to sample the source image
-    // this may not be very efficient but it's simple and works well for small images
-    for (let j = 0; j < height; j++) {
-        for (let i = 0; i < width; i++) {
-            const idx = (j * width + i) * 4;
-            const inv = projection.inverse(i, j, width, height);
+    const imgWidth = originalImage.width;
+    const imgHeight = originalImage.height;
+    const xScale = imgWidth / (2 * Math.PI);
+    const yScale = imgHeight / Math.PI;
+
+    // for every pixel in the output canvas, find the corresponding
+    // pixel in the input image and copy the color
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const inv = projection.inverse(x, y, width, height);
+            const idx = y * width + x;
+
             if (!inv.visible) {
-                data[idx] = 255;
-                data[idx + 1] = 255;
-                data[idx + 2] = 255;
-                data[idx + 3] = 255;
+                data32[idx] = 0xFFFFFFFF;
                 continue;
             }
 
-            const imgX = ((inv.lon + Math.PI) / (2 * Math.PI)) * originalImage.width;
-            const imgY = ((Math.PI / 2 - inv.lat) / Math.PI) * originalImage.height;
-            const sampleX = Math.floor(imgX);
-            const sampleY = Math.floor(imgY);
-            if (sampleX >= 0 && sampleX < originalImage.width && sampleY >= 0 && sampleY < originalImage.height) {
-                const offIndex = (sampleY * originalImage.width + sampleX) * 4;
-                data[idx] = offData[offIndex];
-                data[idx + 1] = offData[offIndex + 1];
-                data[idx + 2] = offData[offIndex + 2];
-                data[idx + 3] = offData[offIndex + 3];
+            const imgX = (inv.lon + Math.PI) * xScale;
+            const imgY = (Math.PI / 2 - inv.lat) * yScale;
+
+            const x0 = Math.floor(imgX);
+            const y0 = Math.floor(imgY);
+
+            if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
+                data32[idx] = offData32[y0 * imgWidth + x0];
             } else {
-                data[idx] = 255;
-                data[idx + 1] = 255;
-                data[idx + 2] = 255;
-                data[idx + 3] = 255;
+                data32[idx] = 0xFFFFFFFF;
             }
         }
     }
+
     projCtx.putImageData(output, 0, 0);
 
     // draw the projected image onto the main canvas
@@ -187,9 +208,9 @@ function drawEverything() {
 
     // checks if the projection needs a circular mask
     if (projection.needsCircularClipping()) {
+        const R = Math.min(width, height) / 2;
         ctx.save();
         ctx.beginPath();
-        const R = Math.min(width, height) / 2;
         ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
         ctx.clip();
         ctx.drawImage(projCanvas, 0, 0);
