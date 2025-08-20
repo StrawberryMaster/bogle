@@ -1,61 +1,15 @@
 // ─────────── Module imports ─────────────
-import Graticule from './graticule.js';
-import OrthographicProjection from './projections/orthographic.js';
-import MercatorProjection from './projections/mercator.js';
-import StereographicProjection from './projections/stereographic.js';
+import { createProjection, createGraticule, needsCircularClipping, projectionConfigs } from './modern-projections.js';
 
-// ─────────── Projections ─────────────
-const projectionTypes = {
-    'ortho': {
-        name: 'Orthographic',
-        class: OrthographicProjection,
-        edgeAngleName: 'Edge angle (°)',
-        min: 0,
-        max: 90
-    },
-    'mercator': {
-        name: 'Mercator',
-        class: MercatorProjection,
-        edgeAngleName: 'Max latitude (°)',
-        min: 45,
-        max: 89.9
-    },
-    'stereo': {
-        name: 'Stereographic',
-        class: StereographicProjection,
-        edgeAngleName: 'Edge angle (°)',
-        min: 0,
-        max: 150
-    }
-};
-
-const projectionCache = new Map();
-const MAX_CACHE_SIZE = 20;
+// Use modern projection configurations
+const projectionTypes = projectionConfigs;
 
 // this is a factory function that creates a projection based on the type
-// should be quite useful when adding more projections
-function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat) {
-    type = projectionTypes[type] ? type : 'ortho';
-    centerLat = Number.isFinite(centerLat) ? centerLat : 0;
-    centerLon = Number.isFinite(centerLon) ? centerLon : 0;
-    edgeAngleOrMaxLat = Number.isFinite(edgeAngleOrMaxLat) ? edgeAngleOrMaxLat : 90;
-
-    const cacheKey = `${type}:${centerLat.toFixed(2)}:${centerLon.toFixed(2)}:${edgeAngleOrMaxLat.toFixed(2)}`;
-
-    if (projectionCache.has(cacheKey)) {
-        return projectionCache.get(cacheKey);
-    }
-
-    const projectionType = projectionTypes[type] || projectionTypes.ortho;
-    const projection = new projectionType.class(centerLat, centerLon, edgeAngleOrMaxLat);
-
-    if (projectionCache.size >= MAX_CACHE_SIZE) {
-        const oldestKey = projectionCache.keys().next().value;
-        projectionCache.delete(oldestKey);
-    }
-
-    projectionCache.set(cacheKey, projection);
-    return projection;
+// now using D3.js projections for better maintainability
+function createProjectionWrapper(type, centerLat, centerLon, edgeAngleOrMaxLat) {
+    const width = canvas.width;
+    const height = canvas.height;
+    return createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat, width, height);
 }
 
 // ─────────── Global variables and offscreen canvases ─────────────
@@ -90,7 +44,7 @@ const graticuleStyleInput = document.getElementById('graticuleStyle');
 let centerLon = -74.01;
 let centerLat = 40.71;
 let edgeAngle = 90;
-let projectionType = projectionSelect.value;
+let projectionType = 'ortho'; // Default to orthographic
 
 // ─────────── Event handlers ─────────────
 uploadInput.addEventListener('change', handleFileUpload);
@@ -202,10 +156,8 @@ function updateAndDraw() {
 }
 
 function drawGraticuleOnly(width, height) {
-    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
-    const graticuleOptions = getGraticuleOptions();
-    const graticule = new Graticule(projection, graticuleOptions);
-    graticule.draw(ctx, width, height);
+    const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
+    drawD3Graticule(ctx, width, height, projection);
 }
 
 function getGraticuleOptions() {
@@ -260,7 +212,7 @@ function processProjection(width, height) {
         projCanvas.height = height;
     }
 
-    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
 
     // preparing an ImageData buffer for the projected image
     const output = projCtx.createImageData(width, height);
@@ -272,25 +224,30 @@ function processProjection(width, height) {
 
     const imgWidth = originalImage.width;
     const imgHeight = originalImage.height;
-    const xScale = imgWidth / (2 * Math.PI);
-    const yScale = imgHeight / Math.PI;
+    const xScale = imgWidth / 360; // longitude mapping: 360 degrees to image width
+    const yScale = imgHeight / 180; // latitude mapping: 180 degrees to image height
 
     // for every pixel in the output canvas, find the corresponding
     // pixel in the input image and copy the color
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-            const inv = projection.inverse(x, y, width, height);
+            const lonLat = projection.invert([x, y]);
             const idx = y * width + x;
 
-            if (!inv.visible) {
+            if (!lonLat) {
+                // Point is outside projection bounds
                 data32[idx] = 0xFFFFFFFF;
                 continue;
             }
 
-            const imgX = (inv.lon + Math.PI) * xScale;
-            const imgY = (Math.PI / 2 - inv.lat) * yScale;
+            const [lon, lat] = lonLat;
+            
+            // Convert longitude and latitude to image coordinates
+            // Longitude: -180 to 180 -> 0 to imgWidth
+            // Latitude: 90 to -90 -> 0 to imgHeight (note the inversion)
+            const imgX = ((lon + 180) % 360) * xScale;
+            const imgY = (90 - lat) * yScale;
 
-            // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
             const y0 = Math.floor(imgY);
             
@@ -308,7 +265,7 @@ function processProjection(width, height) {
     ctx.clearRect(0, 0, width, height);
 
     // checks if the projection needs a circular mask
-    if (projection.needsCircularClipping()) {
+    if (needsCircularClipping(projectionType)) {
         const R = Math.min(width, height) / 2;
         ctx.save();
         ctx.beginPath();
@@ -329,10 +286,80 @@ function processProjection(width, height) {
     }
 
     // graticules! on top
-    const graticuleOptions = getGraticuleOptions();
-    const graticule = new Graticule(projection, graticuleOptions);
-    graticule.draw(ctx, width, height);
+    drawD3Graticule(ctx, width, height, projection);
 }
 
-// Initial draw to show graticule even without image
-drawEverything();
+// ─────────── Modern Graticule drawing function ─────────────
+function drawD3Graticule(context, canvasWidth, canvasHeight, projection) {
+    const graticuleOptions = getGraticuleOptions();
+    
+    if (graticuleOptions.strokeStyle === 'none') {
+        return;
+    }
+
+    context.save();
+    context.strokeStyle = graticuleOptions.color;
+    context.lineWidth = graticuleOptions.lineWidth;
+    
+    // Set line dash pattern
+    switch (graticuleOptions.strokeStyle) {
+        case 'solid': context.setLineDash([]); break;
+        case 'dash': context.setLineDash([8, 4]); break;
+        case 'dot': context.setLineDash([2, 2]); break;
+        case 'dashdot': context.setLineDash([10, 3, 2, 3]); break;
+        default: context.setLineDash([]); break;
+    }
+
+    // Create graticule lines
+    const graticuleLines = createGraticule(graticuleOptions);
+    
+    // Draw each graticule line
+    graticuleLines.forEach(line => {
+        context.beginPath();
+        let started = false;
+        
+        line.forEach(coord => {
+            const [lon, lat] = coord;
+            const projected = projection.project([lon, lat]);
+            
+            if (projected && projection.isVisible(lon, lat)) {
+                const [x, y] = projected;
+                
+                // Check if point is within canvas bounds
+                if (x >= 0 && x <= canvasWidth && y >= 0 && y <= canvasHeight) {
+                    if (!started) {
+                        context.moveTo(x, y);
+                        started = true;
+                    } else {
+                        context.lineTo(x, y);
+                    }
+                }
+            } else {
+                // Break line when point is not visible
+                if (started) {
+                    context.stroke();
+                    context.beginPath();
+                    started = false;
+                }
+            }
+        });
+        
+        if (started) {
+            context.stroke();
+        }
+    });
+
+    context.restore();
+}
+
+// ─────────── Initialization ─────────────
+function initializeApp() {
+    // Sync projectionType with the select value
+    projectionType = projectionSelect.value || 'ortho';
+    
+    // Initial draw to show graticule even without image
+    drawEverything();
+}
+
+// Initialize when the page loads
+initializeApp();
