@@ -39,6 +39,7 @@ const centerLatInput = document.getElementById('centerLat');
 const edgeAngleInput = document.getElementById('edgeAngle');
 const updateBtn = document.getElementById('updateBtn');
 const projectionSelect = document.getElementById('projection');
+const downloadBtn = document.getElementById('downloadBtn'); // added
 
 const graticuleLonSpacingInput = document.getElementById('graticuleLonSpacing');
 const graticuleLatSpacingInput = document.getElementById('graticuleLatSpacing');
@@ -164,6 +165,7 @@ function updateCenterFromDrag(lastPos, currentPos) {
 canvas.style.cursor = 'grab';
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
+downloadBtn.addEventListener('click', handleDownload); // added
 
 // Add real-time updates for better UX
 centerLonInput.addEventListener('input', debounceDraw);
@@ -458,5 +460,45 @@ function drawGraticuleD3(projection, graticule, width, height) {
     ctx.restore();
 }
 
-// Initial draw to show graticule even without image
+// ─────────── Download/export helpers ─────────────
+function handleDownload() {
+    // ensure latest frame is rendered before capture
+    if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+    drawEverything();
+    requestAnimationFrame(() => {
+        const filename = buildFilename();
+        if (canvas.toBlob) {
+            canvas.toBlob(blob => {
+                if (!blob) return;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            }, 'image/png');
+        } else {
+            // fallback for older browsers
+            const dataURL = canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataURL;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+    });
+}
+
+function buildFilename() {
+    const kind = originalImage ? 'map' : 'graticule';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return `bogle_${projectionType}_${kind}_${stamp}.png`;
+}
+
 drawEverything();
