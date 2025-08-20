@@ -102,11 +102,26 @@ export function createGraticule(options = {}) {
     const lonSpacing = options.lonSpacing || 15;
     const latSpacing = options.latSpacing || 15;
     const offset = options.offset || 0;
+    const projectionType = options.projectionType || 'ortho';
+    const centerLon = options.centerLon || 0;
+    const centerLat = options.centerLat || 0;
     
-    // Use global extent for all projections - the projection itself handles centering
-    return d3.geoGraticule()
-        .step([lonSpacing, latSpacing])
-        .extent([[-180, -90 + offset], [180, 90]]);
+    if (projectionType === 'mercator') {
+        // For Mercator, create extended graticule that appears infinite
+        // Extend the longitude range well beyond the visible area
+        const lonRange = 120; // degrees on each side of center
+        const minLon = centerLon - lonRange;
+        const maxLon = centerLon + lonRange;
+        
+        return d3.geoGraticule()
+            .step([lonSpacing, latSpacing])
+            .extent([[minLon, -90 + offset], [maxLon, 89.9]]);
+    } else {
+        // Use global extent for circular projections
+        return d3.geoGraticule()
+            .step([lonSpacing, latSpacing])
+            .extent([[-180, -90 + offset], [180, 90]]);
+    }
 }
 
 /**

@@ -53,7 +53,115 @@ let centerLat = 40.71;
 let edgeAngle = 90;
 let projectionType = projectionSelect.value;
 
-// ─────────── Event handlers ─────────────
+// ─────────── Mouse/Touch interaction for direct coordinate manipulation ─────────────
+let isDragging = false;
+let lastMousePos = { x: 0, y: 0 };
+
+canvas.addEventListener('mousedown', handleMouseDown);
+canvas.addEventListener('mousemove', handleMouseMove);
+canvas.addEventListener('mouseup', handleMouseUp);
+canvas.addEventListener('mouseleave', handleMouseUp);
+
+// Touch events for mobile support
+canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+canvas.addEventListener('touchend', handleTouchEnd);
+
+function handleMouseDown(e) {
+    isDragging = true;
+    const rect = canvas.getBoundingClientRect();
+    lastMousePos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+    canvas.style.cursor = 'grabbing';
+}
+
+function handleMouseMove(e) {
+    if (!isDragging) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const currentPos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+    
+    updateCenterFromDrag(lastMousePos, currentPos);
+    lastMousePos = currentPos;
+}
+
+function handleMouseUp() {
+    isDragging = false;
+    canvas.style.cursor = 'grab';
+}
+
+function handleTouchStart(e) {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        isDragging = true;
+        lastMousePos = {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    }
+}
+
+function handleTouchMove(e) {
+    e.preventDefault();
+    if (!isDragging || e.touches.length !== 1) return;
+    
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const currentPos = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+    };
+    
+    updateCenterFromDrag(lastMousePos, currentPos);
+    lastMousePos = currentPos;
+}
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    isDragging = false;
+}
+
+function updateCenterFromDrag(lastPos, currentPos) {
+    const deltaX = currentPos.x - lastPos.x;
+    const deltaY = currentPos.y - lastPos.y;
+    
+    // Convert screen delta to geographic delta based on projection type
+    let lonDelta = 0;
+    let latDelta = 0;
+    
+    if (projectionType === 'mercator') {
+        // For Mercator, simple linear mapping works well
+        const sensitivity = 0.3; // Adjust sensitivity as needed
+        lonDelta = -deltaX * sensitivity;
+        latDelta = deltaY * sensitivity;
+    } else if (projectionType === 'ortho' || projectionType === 'stereo') {
+        // For spherical projections, use rotation logic
+        const sensitivity = 0.5;
+        lonDelta = -deltaX * sensitivity;
+        latDelta = deltaY * sensitivity;
+    }
+    
+    // Update center coordinates with bounds checking
+    centerLon = Math.max(-180, Math.min(180, centerLon + lonDelta));
+    centerLat = Math.max(-90, Math.min(90, centerLat + latDelta));
+    
+    // Update input fields
+    centerLonInput.value = centerLon.toFixed(2);
+    centerLatInput.value = centerLat.toFixed(2);
+    
+    // Redraw with debouncing for smooth interaction
+    debounceDraw();
+}
+
+// Set initial cursor style
+canvas.style.cursor = 'grab';
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
 
@@ -166,8 +274,13 @@ function drawGraticuleOnly(width, height) {
     const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
     const graticuleOptions = getGraticuleOptions();
     
-    // Create D3 graticule
-    const graticule = createGraticule(graticuleOptions);
+    // Create D3 graticule with projection-specific parameters
+    const graticule = createGraticule({
+        ...graticuleOptions,
+        projectionType: projectionType,
+        centerLon: centerLon,
+        centerLat: centerLat
+    });
     
     drawGraticuleD3(projection, graticule, width, height);
 }
@@ -298,7 +411,12 @@ function processProjection(width, height) {
 
     // graticules! on top
     const graticuleOptions = getGraticuleOptions();
-    const graticule = createGraticule(graticuleOptions);
+    const graticule = createGraticule({
+        ...graticuleOptions,
+        projectionType: projectionType,
+        centerLon: centerLon,
+        centerLat: centerLat
+    });
     drawGraticuleD3(projection, graticule, width, height);
 }
 
