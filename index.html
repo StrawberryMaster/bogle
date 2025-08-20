@@ -30,61 +30,85 @@
 
 <body>
     <h1>bogle...</h1>
-    <div id="controls">
-        <div class="control-group">
-            <label for="upload">Upload map:</label>
-            <input type="file" id="upload" accept="image/*">
-        </div>
+    <div class="layout">
+        <aside id="sidebar">
+            <details open>
+                <summary>Image</summary>
+                <div class="control-group">
+                    <label for="upload">Upload map:</label>
+                    <input type="file" id="upload" accept="image/*">
+                </div>
+            </details>
 
-        <div class="control-group">
-            <label for="projection">Projection:</label>
-            <select id="projection">
-                <option value="ortho" selected>Orthographic</option>
-                <option value="mercator">Mercator</option>
-                <option value="stereo">Stereographic</option>
-            </select>
-        </div>
+            <details open>
+                <summary>Projection</summary>
+                <div class="control-group">
+                    <label for="projection">Projection:</label>
+                    <select id="projection">
+                        <option value="ortho" selected>Orthographic</option>
+                        <option value="mercator">Mercator</option>
+                        <option value="stereo">Stereographic</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="edgeAngle">Edge angle (°) (≤90.0):</label>
+                    <input type="number" id="edgeAngle" value="90" min="0" max="90" step="1" style="width:60px;">
+                </div>
+            </details>
 
-        <div class="control-group">
-            <label for="centerLon">Center Lon (°):</label>
-            <input type="number" id="centerLon" value="-74.01" step="0.1" style="width:80px;">
-            <label for="centerLat">Center Lat (°):</label>
-            <input type="number" id="centerLat" value="40.71" step="0.1" style="width:80px;">
-            <label for="edgeAngle">Edge angle (°) (≤90.0):</label>
-            <input type="number" id="edgeAngle" value="90" min="0" max="90" step="1" style="width:60px;">
-            <button id="updateBtn">Update</button>
-            <button id="downloadBtn">Download</button>
-        </div>
+            <details>
+                <summary>Center & view</summary>
+                <div class="control-group">
+                    <label for="centerLon">Center Lon (°):</label>
+                    <input type="number" id="centerLon" value="-74.01" step="0.1" style="width:80px;">
+                    <label for="centerLat">Center Lat (°):</label>
+                    <input type="number" id="centerLat" value="40.71" step="0.1" style="width:80px;">
+                </div>
+            </details>
 
-        <div class="control-group">
-            <label for="graticuleLonSpacing">Spacing (°E-W):</label>
-            <input type="number" id="graticuleLonSpacing" value="15" step="1" style="width:60px;">
-            <label for="graticuleLatSpacing">Spacing (°N-S):</label>
-            <input type="number" id="graticuleLatSpacing" value="15" step="1" style="width:60px;">
-            <label for="graticuleOffset">Offset Parallels (°):</label>
-            <input type="number" id="graticuleOffset" value="0" step="1" style="width:60px;">
-        </div>
+            <details>
+                <summary>Graticule</summary>
+                <div class="control-group">
+                    <label for="graticuleLonSpacing">Spacing (°E-W):</label>
+                    <input type="number" id="graticuleLonSpacing" value="15" step="1" style="width:60px;">
+                    <label for="graticuleLatSpacing">Spacing (°N-S):</label>
+                    <input type="number" id="graticuleLatSpacing" value="15" step="1" style="width:60px;">
+                </div>
+                <div class="control-group">
+                    <label for="graticuleOffset">Offset Parallels (°):</label>
+                    <input type="number" id="graticuleOffset" value="0" step="1" style="width:60px;">
+                </div>
+                <div class="control-group">
+                    <label for="graticuleStyle">Stroke:</label>
+                    <select id="graticuleStyle">
+                        <option value="none">None</option>
+                        <option value="solid" selected>Solid</option>
+                        <option value="dash">Dash</option>
+                        <option value="dot">Dot</option>
+                        <option value="dashdot">Dot-Dash</option>
+                    </select>
+                    <label for="graticuleColor">Color:</label>
+                    <input type="color" id="graticuleColor" value="#000000">
+                    <label for="graticuleLineWidth">Weight:</label>
+                    <input type="number" id="graticuleLineWidth" value="1" step="1" style="width:40px;">
+                </div>
+            </details>
 
-        <div class="control-group">
-            <label for="graticuleStyle">Stroke:</label>
-            <select id="graticuleStyle">
-                <option value="none">None</option>
-                <option value="solid" selected>Solid</option>
-                <option value="dash">Dash</option>
-                <option value="dot">Dot</option>
-                <option value="dashdot">Dot-Dash</option>
-            </select>
-            <label for="graticuleColor">Color:</label>
-            <input type="color" id="graticuleColor" value="#000000">
-            <label for="graticuleLineWidth">Weight:</label>
-            <input type="number" id="graticuleLineWidth" value="1" step="1" style="width:40px;">
-        </div>
-    </div>
+            <details>
+                <summary>Export</summary>
+                <div class="control-group">
+                    <button id="updateBtn">Update</button>
+                    <button id="downloadBtn">Download</button>
+                </div>
+            </details>
+        </aside>
 
-    <canvas id="canvas" width="600" height="600"></canvas>
-    
-    <div class="interaction-hint">
-        💡 Tip: Click and drag on the map to change center coordinates interactively!
+        <main id="stage">
+            <canvas id="canvas" width="600" height="600"></canvas>
+            <div class="interaction-hint">
+                💡 Tip: Click and drag on the map to change center coordinates interactively!
+            </div>
+        </main>
     </div>
 
     <script type="module" src="scripts/projector.js"></script>

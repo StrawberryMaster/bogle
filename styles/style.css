@@ -1,7 +1,7 @@
 body {
     align-items: center;
     background: #f0f0f0;
-    background: linear-gradient(#f0f0f0, #fafad7);
+    background: linear-gradient(#f0f0f0, #faebd7);
     display: flex;
     flex-direction: column;
     font-family: Arial, sans-serif;
@@ -24,9 +24,54 @@ body {
     padding: .75rem;
 }
 
+.layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 1rem;
+    width: 100%;
+    max-width: 1200px;
+}
+
+#sidebar {
+    background: #fff;
+    border-radius: 0 .2rem .2rem 0;
+    box-shadow: 0 .1rem .25rem rgba(0, 0, 0, 0.1);
+    padding: .75rem;
+    position: sticky;
+    top: .75rem;
+    align-self: start;
+}
+
+#stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#sidebar details {
+    border: 1px solid #eee;
+    border-radius: .2rem;
+    margin-bottom: .5rem;
+    padding: .25rem .5rem;
+}
+
+#sidebar summary {
+    cursor: pointer;
+    font-weight: bold;
+    color: #333;
+    padding: .25rem 0;
+    outline: none;
+}
+
+#sidebar details[open] summary {
+    color: #111;
+}
+
 .control-group {
     align-items: center;
     display: flex;
+    flex-wrap: wrap;
+    gap: .5rem .25rem;
     margin: 10px 0 15px 0;
 }
 
@@ -34,6 +79,7 @@ body {
     font-weight: bold;
     color: #333;
     margin: 0 .5rem 0 .75rem;
+    min-width: 7rem;
 }
 
 .control-group input,
@@ -49,4 +95,13 @@ body {
     margin: 1em;
     background: beige;
     border-radius: 0 5px 5px;
+}
+
+@media (max-width: 900px) {
+    .layout {
+        grid-template-columns: 1fr;
+    }
+    #sidebar {
+        position: static;
+    }
 }
