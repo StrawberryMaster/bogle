@@ -22,8 +22,8 @@ const projectionConfigs = {
         max: 89.9,
         createProjection: (centerLat, centerLon, maxLat) => {
             return d3.geoMercator()
-                .center([centerLon, centerLat])
-                .clipExtent([[-180, -maxLat], [180, maxLat]]);
+                .center([centerLon, centerLat]);
+                // Remove clipExtent as it interferes with graticule rendering
         }
     },
     'stereo': {
@@ -69,9 +69,18 @@ export function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat, 
     const config = projectionConfigs[type];
     const projection = config.createProjection(centerLat, centerLon, edgeAngleOrMaxLat);
     
-    // Set up the projection for the canvas size
+    // Set up projection-specific scaling for better canvas coverage
+    let scale;
+    if (type === 'mercator') {
+        // Mercator: scale to show reasonable latitude range, not too zoomed in
+        scale = width / 6; // Reduced from 2*PI to show more reasonable coverage
+    } else {
+        // Orthographic & Stereographic: scale to fill most of the canvas as a circle
+        scale = Math.min(width, height) / 2.2; // Use 2.2 instead of 4 for much larger coverage
+    }
+    
     projection
-        .scale(Math.min(width, height) / 4)
+        .scale(scale)
         .translate([width / 2, height / 2]);
     
     // Manage cache size
