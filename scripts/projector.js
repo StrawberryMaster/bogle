@@ -142,10 +142,29 @@ function debounceDraw() {
 function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+        alert('Please select a valid image file.');
+        return;
+    }
+    
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+        alert('Image file is too large. Please select a file smaller than 10MB.');
+        return;
+    }
+    
     const reader = new FileReader();
     reader.onload = evt => {
         const img = new Image();
         img.onload = () => {
+            // Validate image dimensions
+            if (img.width > 4096 || img.height > 4096) {
+                alert('Image dimensions are too large. Please use an image smaller than 4096x4096 pixels.');
+                return;
+            }
+            
             originalImage = img;
             offCanvas.width = img.width;
             offCanvas.height = img.height;
@@ -153,16 +172,32 @@ function handleFileUpload(e) {
             offCtx.drawImage(originalImage, 0, 0);
             drawEverything();
         };
+        img.onerror = () => {
+            alert('Error loading image. Please try a different file.');
+        };
         img.src = evt.target.result;
+    };
+    reader.onerror = () => {
+        alert('Error reading file. Please try again.');
     };
     reader.readAsDataURL(file);
 }
 
 function updateAndDraw() {
-    centerLon = parseFloat(centerLonInput.value) || centerLon;
-    centerLat = parseFloat(centerLatInput.value) || centerLat;
-    edgeAngle = parseFloat(edgeAngleInput.value) || edgeAngle;
+    // Validate and clamp input values
+    centerLon = Math.max(-180, Math.min(180, parseFloat(centerLonInput.value) || centerLon));
+    centerLat = Math.max(-90, Math.min(90, parseFloat(centerLatInput.value) || centerLat));
+    
+    const projConfig = projectionTypes[projectionType] || projectionTypes['ortho'];
+    edgeAngle = Math.max(projConfig.min, Math.min(projConfig.max, parseFloat(edgeAngleInput.value) || edgeAngle));
+    
     projectionType = projectionSelect.value;
+    
+    // Update input fields with clamped values
+    centerLonInput.value = centerLon.toFixed(2);
+    centerLatInput.value = centerLat.toFixed(2);
+    edgeAngleInput.value = edgeAngle.toFixed(1);
+    
     drawEverything();
 }
 
@@ -258,21 +293,9 @@ function processProjection(width, height) {
             // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
             const y0 = Math.floor(imgY);
-            const x1 = Math.min(x0 + 1, imgWidth - 1);
-            const y1 = Math.min(y0 + 1, imgHeight - 1);
             
             if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
-                const fx = imgX - x0;
-                const fy = imgY - y0;
-                
-                // Get the four corner pixels
-                const tl = offData32[y0 * imgWidth + x0]; // top-left
-                const tr = offData32[y0 * imgWidth + x1]; // top-right
-                const bl = offData32[y1 * imgWidth + x0]; // bottom-left
-                const br = offData32[y1 * imgWidth + x1]; // bottom-right
-                
-                // Simple bilinear interpolation (for now just use nearest neighbor for performance)
-                data32[idx] = tl;
+                data32[idx] = offData32[y0 * imgWidth + x0];
             } else {
                 data32[idx] = 0xFFFFFFFF;
             }
