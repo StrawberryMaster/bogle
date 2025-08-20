@@ -1,7 +1,14 @@
 // ─────────── Module imports ─────────────
-import { createProjection, createGraticule, needsCircularClipping, projectionConfigs } from './modern-projections.js';
+import { 
+    createProjection, 
+    createGraticule, 
+    needsCircularClipping, 
+    projectionConfigs,
+    projectCoordinates,
+    invertCoordinates
+} from './d3-projections.js';
 
-// Use modern projection configurations
+// Use D3.js projection configurations
 const projectionTypes = projectionConfigs;
 
 // this is a factory function that creates a projection based on the type
@@ -44,7 +51,7 @@ const graticuleStyleInput = document.getElementById('graticuleStyle');
 let centerLon = -74.01;
 let centerLat = 40.71;
 let edgeAngle = 90;
-let projectionType = 'ortho'; // Default to orthographic
+let projectionType = projectionSelect.value;
 
 // ─────────── Event handlers ─────────────
 uploadInput.addEventListener('change', handleFileUpload);
@@ -157,7 +164,12 @@ function updateAndDraw() {
 
 function drawGraticuleOnly(width, height) {
     const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
-    drawD3Graticule(ctx, width, height, projection);
+    const graticuleOptions = getGraticuleOptions();
+    
+    // Create D3 graticule
+    const graticule = createGraticule(graticuleOptions);
+    
+    drawGraticuleD3(projection, graticule, width, height);
 }
 
 function getGraticuleOptions() {
@@ -224,37 +236,36 @@ function processProjection(width, height) {
 
     const imgWidth = originalImage.width;
     const imgHeight = originalImage.height;
-    const xScale = imgWidth / 360; // longitude mapping: 360 degrees to image width
-    const yScale = imgHeight / 180; // latitude mapping: 180 degrees to image height
+    const xScale = imgWidth / 360; // degrees to pixels
+    const yScale = imgHeight / 180; // degrees to pixels
 
     // for every pixel in the output canvas, find the corresponding
     // pixel in the input image and copy the color
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-            const lonLat = projection.invert([x, y]);
+            const coords = invertCoordinates(projection, [x, y]);
             const idx = y * width + x;
 
-            if (!lonLat) {
-                // Point is outside projection bounds
-                data32[idx] = 0xFFFFFFFF;
+            if (!coords) {
+                data32[idx] = 0xFFFFFFFF; // white background
                 continue;
             }
 
-            const [lon, lat] = lonLat;
+            const [lon, lat] = coords;
             
-            // Convert longitude and latitude to image coordinates
-            // Longitude: -180 to 180 -> 0 to imgWidth
-            // Latitude: 90 to -90 -> 0 to imgHeight (note the inversion)
-            const imgX = ((lon + 180) % 360) * xScale;
-            const imgY = (90 - lat) * yScale;
+            // Convert longitude/latitude to image coordinates
+            // Image coordinates: 0,0 is top-left, lon=[-180,180], lat=[-90,90]
+            const imgX = (lon + 180) * xScale;
+            const imgY = (90 - lat) * yScale; // flip Y axis
 
+            // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
             const y0 = Math.floor(imgY);
             
             if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
                 data32[idx] = offData32[y0 * imgWidth + x0];
             } else {
-                data32[idx] = 0xFFFFFFFF;
+                data32[idx] = 0xFFFFFFFF; // white background
             }
         }
     }
@@ -286,80 +297,48 @@ function processProjection(width, height) {
     }
 
     // graticules! on top
-    drawD3Graticule(ctx, width, height, projection);
+    const graticuleOptions = getGraticuleOptions();
+    const graticule = createGraticule(graticuleOptions);
+    drawGraticuleD3(projection, graticule, width, height);
 }
 
-// ─────────── Modern Graticule drawing function ─────────────
-function drawD3Graticule(context, canvasWidth, canvasHeight, projection) {
+// Draw graticule using D3.js generator
+function drawGraticuleD3(projection, graticule, width, height) {
     const graticuleOptions = getGraticuleOptions();
     
     if (graticuleOptions.strokeStyle === 'none') {
         return;
     }
-
-    context.save();
-    context.strokeStyle = graticuleOptions.color;
-    context.lineWidth = graticuleOptions.lineWidth;
+    
+    ctx.save();
+    ctx.strokeStyle = graticuleOptions.color;
+    ctx.lineWidth = graticuleOptions.lineWidth;
     
     // Set line dash pattern
     switch (graticuleOptions.strokeStyle) {
-        case 'solid': context.setLineDash([]); break;
-        case 'dash': context.setLineDash([8, 4]); break;
-        case 'dot': context.setLineDash([2, 2]); break;
-        case 'dashdot': context.setLineDash([10, 3, 2, 3]); break;
-        default: context.setLineDash([]); break;
+        case 'dash':
+            ctx.setLineDash([5, 5]);
+            break;
+        case 'dot':
+            ctx.setLineDash([2, 3]);
+            break;
+        case 'dashdot':
+            ctx.setLineDash([5, 3, 2, 3]);
+            break;
+        default:
+            ctx.setLineDash([]);
     }
-
-    // Create graticule lines
-    const graticuleLines = createGraticule(graticuleOptions);
     
-    // Draw each graticule line
-    graticuleLines.forEach(line => {
-        context.beginPath();
-        let started = false;
-        
-        line.forEach(coord => {
-            const [lon, lat] = coord;
-            const projected = projection.project([lon, lat]);
-            
-            if (projected && projection.isVisible(lon, lat)) {
-                const [x, y] = projected;
-                
-                // Check if point is within canvas bounds
-                if (x >= 0 && x <= canvasWidth && y >= 0 && y <= canvasHeight) {
-                    if (!started) {
-                        context.moveTo(x, y);
-                        started = true;
-                    } else {
-                        context.lineTo(x, y);
-                    }
-                }
-            } else {
-                // Break line when point is not visible
-                if (started) {
-                    context.stroke();
-                    context.beginPath();
-                    started = false;
-                }
-            }
-        });
-        
-        if (started) {
-            context.stroke();
-        }
-    });
-
-    context.restore();
+    // Create D3 path generator
+    const pathGenerator = d3.geoPath().projection(projection).context(ctx);
+    
+    // Draw graticule lines
+    ctx.beginPath();
+    pathGenerator(graticule());
+    ctx.stroke();
+    
+    ctx.restore();
 }
 
-// ─────────── Initialization ─────────────
-function initializeApp() {
-    // Sync projectionType with the select value
-    projectionType = projectionSelect.value || 'ortho';
-    
-    // Initial draw to show graticule even without image
-    drawEverything();
-}
-
-// Initialize when the page loads
-initializeApp();
+// Initial draw to show graticule even without image
+drawEverything();
