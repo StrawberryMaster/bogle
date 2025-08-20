@@ -96,6 +96,17 @@ let projectionType = projectionSelect.value;
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
 
+// Add real-time updates for better UX
+centerLonInput.addEventListener('input', debounceDraw);
+centerLatInput.addEventListener('input', debounceDraw);
+edgeAngleInput.addEventListener('input', debounceDraw);
+graticuleLonSpacingInput.addEventListener('input', debounceDraw);
+graticuleLatSpacingInput.addEventListener('input', debounceDraw);
+graticuleOffsetInput.addEventListener('input', debounceDraw);
+graticuleColorInput.addEventListener('input', debounceDraw);
+graticuleLineWidthInput.addEventListener('input', debounceDraw);
+graticuleStyleInput.addEventListener('change', debounceDraw);
+
 // so we can update the projection type and edge angle
 projectionSelect.addEventListener('change', function () {
     projectionType = this.value;
@@ -116,18 +127,44 @@ projectionSelect.addEventListener('change', function () {
 });
 
 let debounceTimer;
+let animationId;
+
 function debounceDraw() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(drawEverything, 100);
+    debounceTimer = setTimeout(() => {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        animationId = requestAnimationFrame(drawEverything);
+    }, 100);
 }
 
 function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+        alert('Please select a valid image file.');
+        return;
+    }
+    
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+        alert('Image file is too large. Please select a file smaller than 10MB.');
+        return;
+    }
+    
     const reader = new FileReader();
     reader.onload = evt => {
         const img = new Image();
         img.onload = () => {
+            // Validate image dimensions
+            if (img.width > 4096 || img.height > 4096) {
+                alert('Image dimensions are too large. Please use an image smaller than 4096x4096 pixels.');
+                return;
+            }
+            
             originalImage = img;
             offCanvas.width = img.width;
             offCanvas.height = img.height;
@@ -135,25 +172,88 @@ function handleFileUpload(e) {
             offCtx.drawImage(originalImage, 0, 0);
             drawEverything();
         };
+        img.onerror = () => {
+            alert('Error loading image. Please try a different file.');
+        };
         img.src = evt.target.result;
+    };
+    reader.onerror = () => {
+        alert('Error reading file. Please try again.');
     };
     reader.readAsDataURL(file);
 }
 
 function updateAndDraw() {
-    centerLon = parseFloat(centerLonInput.value) || centerLon;
-    centerLat = parseFloat(centerLatInput.value) || centerLat;
-    edgeAngle = parseFloat(edgeAngleInput.value) || edgeAngle;
+    // Validate and clamp input values
+    centerLon = Math.max(-180, Math.min(180, parseFloat(centerLonInput.value) || centerLon));
+    centerLat = Math.max(-90, Math.min(90, parseFloat(centerLatInput.value) || centerLat));
+    
+    const projConfig = projectionTypes[projectionType] || projectionTypes['ortho'];
+    edgeAngle = Math.max(projConfig.min, Math.min(projConfig.max, parseFloat(edgeAngleInput.value) || edgeAngle));
+    
     projectionType = projectionSelect.value;
+    
+    // Update input fields with clamped values
+    centerLonInput.value = centerLon.toFixed(2);
+    centerLatInput.value = centerLat.toFixed(2);
+    edgeAngleInput.value = edgeAngle.toFixed(1);
+    
     drawEverything();
+}
+
+function drawGraticuleOnly(width, height) {
+    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    const graticuleOptions = getGraticuleOptions();
+    const graticule = new Graticule(projection, graticuleOptions);
+    graticule.draw(ctx, width, height);
+}
+
+function getGraticuleOptions() {
+    return {
+        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 15,
+        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 15,
+        offset: parseFloat(graticuleOffsetInput.value) || 0,
+        color: graticuleColorInput.value || '#ffffff',
+        lineWidth: parseFloat(graticuleLineWidthInput.value) || 1,
+        strokeStyle: graticuleStyleInput.value || 'solid'
+    };
 }
 
 // ─────────── Main drawing function ─────────────
 // yeah i know. it's a funny name. it is what it is
 function drawEverything() {
-    if (!originalImage) return;
     const width = canvas.width;
     const height = canvas.height;
+    
+    // Clear canvas with white background
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, width, height);
+    
+    if (!originalImage) {
+        // Just draw graticule if no image is loaded
+        drawGraticuleOnly(width, height);
+        return;
+    }
+
+    // Show processing indicator for large images
+    if (originalImage.width * originalImage.height > 100000) {
+        ctx.fillStyle = 'rgba(0,0,0,0.1)';
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = 'black';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Processing...', width/2, height/2);
+        
+        // Use setTimeout to allow UI update
+        setTimeout(() => processProjection(width, height), 10);
+        return;
+    }
+    
+    processProjection(width, height);
+}
+
+function processProjection(width, height) {
 
     if (projCanvas.width !== width || projCanvas.height !== height) {
         projCanvas.width = width;
@@ -190,9 +290,10 @@ function drawEverything() {
             const imgX = (inv.lon + Math.PI) * xScale;
             const imgY = (Math.PI / 2 - inv.lat) * yScale;
 
+            // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
             const y0 = Math.floor(imgY);
-
+            
             if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
                 data32[idx] = offData32[y0 * imgWidth + x0];
             } else {
@@ -228,14 +329,10 @@ function drawEverything() {
     }
 
     // graticules! on top
-    const graticuleOptions = {
-        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 15,
-        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 15,
-        offset: parseFloat(graticuleOffsetInput.value) || 0,
-        color: graticuleColorInput.value || '#ffffff',
-        lineWidth: parseFloat(graticuleLineWidthInput.value) || 1,
-        strokeStyle: graticuleStyleInput.value || 'solid'
-    };
+    const graticuleOptions = getGraticuleOptions();
     const graticule = new Graticule(projection, graticuleOptions);
     graticule.draw(ctx, width, height);
 }
+
+// Initial draw to show graticule even without image
+drawEverything();
