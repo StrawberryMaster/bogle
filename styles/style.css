@@ -1,6 +1,7 @@
 body {
     align-items: center;
     background: #f0f0f0;
+    background: linear-gradient(#f0f0f0, #fafad7);
     display: flex;
     flex-direction: column;
     font-family: Arial, sans-serif;
@@ -40,4 +41,12 @@ body {
     padding: .2rem;
     border: .1rem solid #ccc;
     border-radius: .2rem;
+}
+
+.interaction-hint {
+    padding: 5px 10px;
+    border: 1px solid saddlebrown;
+    margin: 1em;
+    background: beige;
+    border-radius: 0 5px 5px;
 }

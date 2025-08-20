@@ -1,61 +1,22 @@
 // ─────────── Module imports ─────────────
-import Graticule from './graticule.js';
-import OrthographicProjection from './projections/orthographic.js';
-import MercatorProjection from './projections/mercator.js';
-import StereographicProjection from './projections/stereographic.js';
+import { 
+    createProjection, 
+    createGraticule, 
+    needsCircularClipping, 
+    projectionConfigs,
+    projectCoordinates,
+    invertCoordinates
+} from './d3-projections.js';
 
-// ─────────── Projections ─────────────
-const projectionTypes = {
-    'ortho': {
-        name: 'Orthographic',
-        class: OrthographicProjection,
-        edgeAngleName: 'Edge angle (°)',
-        min: 0,
-        max: 90
-    },
-    'mercator': {
-        name: 'Mercator',
-        class: MercatorProjection,
-        edgeAngleName: 'Max latitude (°)',
-        min: 45,
-        max: 89.9
-    },
-    'stereo': {
-        name: 'Stereographic',
-        class: StereographicProjection,
-        edgeAngleName: 'Edge angle (°)',
-        min: 0,
-        max: 150
-    }
-};
-
-const projectionCache = new Map();
-const MAX_CACHE_SIZE = 20;
+// Use D3.js projection configurations
+const projectionTypes = projectionConfigs;
 
 // this is a factory function that creates a projection based on the type
-// should be quite useful when adding more projections
-function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat) {
-    type = projectionTypes[type] ? type : 'ortho';
-    centerLat = Number.isFinite(centerLat) ? centerLat : 0;
-    centerLon = Number.isFinite(centerLon) ? centerLon : 0;
-    edgeAngleOrMaxLat = Number.isFinite(edgeAngleOrMaxLat) ? edgeAngleOrMaxLat : 90;
-
-    const cacheKey = `${type}:${centerLat.toFixed(2)}:${centerLon.toFixed(2)}:${edgeAngleOrMaxLat.toFixed(2)}`;
-
-    if (projectionCache.has(cacheKey)) {
-        return projectionCache.get(cacheKey);
-    }
-
-    const projectionType = projectionTypes[type] || projectionTypes.ortho;
-    const projection = new projectionType.class(centerLat, centerLon, edgeAngleOrMaxLat);
-
-    if (projectionCache.size >= MAX_CACHE_SIZE) {
-        const oldestKey = projectionCache.keys().next().value;
-        projectionCache.delete(oldestKey);
-    }
-
-    projectionCache.set(cacheKey, projection);
-    return projection;
+// now using D3.js projections for better maintainability
+function createProjectionWrapper(type, centerLat, centerLon, edgeAngleOrMaxLat) {
+    const width = canvas.width;
+    const height = canvas.height;
+    return createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat, width, height);
 }
 
 // ─────────── Global variables and offscreen canvases ─────────────
@@ -92,7 +53,115 @@ let centerLat = 40.71;
 let edgeAngle = 90;
 let projectionType = projectionSelect.value;
 
-// ─────────── Event handlers ─────────────
+// ─────────── Mouse/Touch interaction for direct coordinate manipulation ─────────────
+let isDragging = false;
+let lastMousePos = { x: 0, y: 0 };
+
+canvas.addEventListener('mousedown', handleMouseDown);
+canvas.addEventListener('mousemove', handleMouseMove);
+canvas.addEventListener('mouseup', handleMouseUp);
+canvas.addEventListener('mouseleave', handleMouseUp);
+
+// Touch events for mobile support
+canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+canvas.addEventListener('touchend', handleTouchEnd);
+
+function handleMouseDown(e) {
+    isDragging = true;
+    const rect = canvas.getBoundingClientRect();
+    lastMousePos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+    canvas.style.cursor = 'grabbing';
+}
+
+function handleMouseMove(e) {
+    if (!isDragging) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const currentPos = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+    
+    updateCenterFromDrag(lastMousePos, currentPos);
+    lastMousePos = currentPos;
+}
+
+function handleMouseUp() {
+    isDragging = false;
+    canvas.style.cursor = 'grab';
+}
+
+function handleTouchStart(e) {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        isDragging = true;
+        lastMousePos = {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    }
+}
+
+function handleTouchMove(e) {
+    e.preventDefault();
+    if (!isDragging || e.touches.length !== 1) return;
+    
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const currentPos = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+    };
+    
+    updateCenterFromDrag(lastMousePos, currentPos);
+    lastMousePos = currentPos;
+}
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    isDragging = false;
+}
+
+function updateCenterFromDrag(lastPos, currentPos) {
+    const deltaX = currentPos.x - lastPos.x;
+    const deltaY = currentPos.y - lastPos.y;
+    
+    // Convert screen delta to geographic delta based on projection type
+    let lonDelta = 0;
+    let latDelta = 0;
+    
+    if (projectionType === 'mercator') {
+        // For Mercator, simple linear mapping works well
+        const sensitivity = 0.3; // Adjust sensitivity as needed
+        lonDelta = -deltaX * sensitivity;
+        latDelta = deltaY * sensitivity;
+    } else if (projectionType === 'ortho' || projectionType === 'stereo') {
+        // For spherical projections, use rotation logic
+        const sensitivity = 0.5;
+        lonDelta = -deltaX * sensitivity;
+        latDelta = deltaY * sensitivity;
+    }
+    
+    // Update center coordinates with bounds checking
+    centerLon = Math.max(-180, Math.min(180, centerLon + lonDelta));
+    centerLat = Math.max(-90, Math.min(90, centerLat + latDelta));
+    
+    // Update input fields
+    centerLonInput.value = centerLon.toFixed(2);
+    centerLatInput.value = centerLat.toFixed(2);
+    
+    // Redraw with debouncing for smooth interaction
+    debounceDraw();
+}
+
+// Set initial cursor style
+canvas.style.cursor = 'grab';
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
 
@@ -202,10 +271,18 @@ function updateAndDraw() {
 }
 
 function drawGraticuleOnly(width, height) {
-    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
     const graticuleOptions = getGraticuleOptions();
-    const graticule = new Graticule(projection, graticuleOptions);
-    graticule.draw(ctx, width, height);
+    
+    // Create D3 graticule with projection-specific parameters
+    const graticule = createGraticule({
+        ...graticuleOptions,
+        projectionType: projectionType,
+        centerLon: centerLon,
+        centerLat: centerLat
+    });
+    
+    drawGraticuleD3(projection, graticule, width, height);
 }
 
 function getGraticuleOptions() {
@@ -260,7 +337,7 @@ function processProjection(width, height) {
         projCanvas.height = height;
     }
 
-    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
 
     // preparing an ImageData buffer for the projected image
     const output = projCtx.createImageData(width, height);
@@ -272,23 +349,27 @@ function processProjection(width, height) {
 
     const imgWidth = originalImage.width;
     const imgHeight = originalImage.height;
-    const xScale = imgWidth / (2 * Math.PI);
-    const yScale = imgHeight / Math.PI;
+    const xScale = imgWidth / 360; // degrees to pixels
+    const yScale = imgHeight / 180; // degrees to pixels
 
     // for every pixel in the output canvas, find the corresponding
     // pixel in the input image and copy the color
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-            const inv = projection.inverse(x, y, width, height);
+            const coords = invertCoordinates(projection, [x, y]);
             const idx = y * width + x;
 
-            if (!inv.visible) {
-                data32[idx] = 0xFFFFFFFF;
+            if (!coords) {
+                data32[idx] = 0xFFFFFFFF; // white background
                 continue;
             }
 
-            const imgX = (inv.lon + Math.PI) * xScale;
-            const imgY = (Math.PI / 2 - inv.lat) * yScale;
+            const [lon, lat] = coords;
+            
+            // Convert longitude/latitude to image coordinates
+            // Image coordinates: 0,0 is top-left, lon=[-180,180], lat=[-90,90]
+            const imgX = (lon + 180) * xScale;
+            const imgY = (90 - lat) * yScale; // flip Y axis
 
             // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
@@ -297,7 +378,7 @@ function processProjection(width, height) {
             if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
                 data32[idx] = offData32[y0 * imgWidth + x0];
             } else {
-                data32[idx] = 0xFFFFFFFF;
+                data32[idx] = 0xFFFFFFFF; // white background
             }
         }
     }
@@ -308,8 +389,8 @@ function processProjection(width, height) {
     ctx.clearRect(0, 0, width, height);
 
     // checks if the projection needs a circular mask
-    if (projection.needsCircularClipping()) {
-        const R = Math.min(width, height) / 2;
+    if (needsCircularClipping(projectionType)) {
+        const R = Math.min(width, height) / 2; // Use full canvas radius to match projection scale
         ctx.save();
         ctx.beginPath();
         ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);
@@ -330,8 +411,51 @@ function processProjection(width, height) {
 
     // graticules! on top
     const graticuleOptions = getGraticuleOptions();
-    const graticule = new Graticule(projection, graticuleOptions);
-    graticule.draw(ctx, width, height);
+    const graticule = createGraticule({
+        ...graticuleOptions,
+        projectionType: projectionType,
+        centerLon: centerLon,
+        centerLat: centerLat
+    });
+    drawGraticuleD3(projection, graticule, width, height);
+}
+
+// Draw graticule using D3.js generator
+function drawGraticuleD3(projection, graticule, width, height) {
+    const graticuleOptions = getGraticuleOptions();
+    
+    if (graticuleOptions.strokeStyle === 'none') {
+        return;
+    }
+    
+    ctx.save();
+    ctx.strokeStyle = graticuleOptions.color;
+    ctx.lineWidth = graticuleOptions.lineWidth;
+    
+    // Set line dash pattern
+    switch (graticuleOptions.strokeStyle) {
+        case 'dash':
+            ctx.setLineDash([5, 5]);
+            break;
+        case 'dot':
+            ctx.setLineDash([2, 3]);
+            break;
+        case 'dashdot':
+            ctx.setLineDash([5, 3, 2, 3]);
+            break;
+        default:
+            ctx.setLineDash([]);
+    }
+    
+    // Create D3 path generator
+    const pathGenerator = d3.geoPath().projection(projection).context(ctx);
+    
+    // Draw graticule lines
+    ctx.beginPath();
+    pathGenerator(graticule());
+    ctx.stroke();
+    
+    ctx.restore();
 }
 
 // Initial draw to show graticule even without image
