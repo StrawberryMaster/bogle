@@ -277,7 +277,7 @@ function processProjection(width, height) {
 
     // checks if the projection needs a circular mask
     if (needsCircularClipping(projectionType)) {
-        const R = Math.min(width, height) / 2;
+        const R = Math.min(width, height) / 2; // Use full canvas radius to match projection scale
         ctx.save();
         ctx.beginPath();
         ctx.arc(width / 2, height / 2, R, 0, 2 * Math.PI);

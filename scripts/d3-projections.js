@@ -69,14 +69,14 @@ export function createProjection(type, centerLat, centerLon, edgeAngleOrMaxLat, 
     const config = projectionConfigs[type];
     const projection = config.createProjection(centerLat, centerLon, edgeAngleOrMaxLat);
     
-    // Set up projection-specific scaling for better canvas coverage
+    // Set up projection-specific scaling for optimal canvas coverage
     let scale;
     if (type === 'mercator') {
-        // Mercator: scale to show reasonable latitude range, not too zoomed in
-        scale = width / 6; // Reduced from 2*PI to show more reasonable coverage
+        // Mercator: scale to show reasonable latitude range and make center changes more visible
+        scale = width / 4; // Increased from /6 to /4 for better visibility of center changes
     } else {
-        // Orthographic & Stereographic: scale to fill most of the canvas as a circle
-        scale = Math.min(width, height) / 2.2; // Use 2.2 instead of 4 for much larger coverage
+        // Orthographic & Stereographic: scale to fill the entire canvas
+        scale = Math.min(width, height) / 2; // Fill the entire canvas (radius = canvas/2)
     }
     
     projection
@@ -103,6 +103,7 @@ export function createGraticule(options = {}) {
     const latSpacing = options.latSpacing || 15;
     const offset = options.offset || 0;
     
+    // Use global extent for all projections - the projection itself handles centering
     return d3.geoGraticule()
         .step([lonSpacing, latSpacing])
         .extent([[-180, -90 + offset], [180, 90]]);
