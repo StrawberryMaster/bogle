@@ -96,6 +96,17 @@ let projectionType = projectionSelect.value;
 uploadInput.addEventListener('change', handleFileUpload);
 updateBtn.addEventListener('click', updateAndDraw);
 
+// Add real-time updates for better UX
+centerLonInput.addEventListener('input', debounceDraw);
+centerLatInput.addEventListener('input', debounceDraw);
+edgeAngleInput.addEventListener('input', debounceDraw);
+graticuleLonSpacingInput.addEventListener('input', debounceDraw);
+graticuleLatSpacingInput.addEventListener('input', debounceDraw);
+graticuleOffsetInput.addEventListener('input', debounceDraw);
+graticuleColorInput.addEventListener('input', debounceDraw);
+graticuleLineWidthInput.addEventListener('input', debounceDraw);
+graticuleStyleInput.addEventListener('change', debounceDraw);
+
 // so we can update the projection type and edge angle
 projectionSelect.addEventListener('change', function () {
     projectionType = this.value;
@@ -116,9 +127,16 @@ projectionSelect.addEventListener('change', function () {
 });
 
 let debounceTimer;
+let animationId;
+
 function debounceDraw() {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(drawEverything, 100);
+    debounceTimer = setTimeout(() => {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        animationId = requestAnimationFrame(drawEverything);
+    }, 100);
 }
 
 function handleFileUpload(e) {
@@ -148,12 +166,59 @@ function updateAndDraw() {
     drawEverything();
 }
 
+function drawGraticuleOnly(width, height) {
+    const projection = createProjection(projectionType, centerLat, centerLon, edgeAngle);
+    const graticuleOptions = getGraticuleOptions();
+    const graticule = new Graticule(projection, graticuleOptions);
+    graticule.draw(ctx, width, height);
+}
+
+function getGraticuleOptions() {
+    return {
+        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 15,
+        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 15,
+        offset: parseFloat(graticuleOffsetInput.value) || 0,
+        color: graticuleColorInput.value || '#ffffff',
+        lineWidth: parseFloat(graticuleLineWidthInput.value) || 1,
+        strokeStyle: graticuleStyleInput.value || 'solid'
+    };
+}
+
 // ─────────── Main drawing function ─────────────
 // yeah i know. it's a funny name. it is what it is
 function drawEverything() {
-    if (!originalImage) return;
     const width = canvas.width;
     const height = canvas.height;
+    
+    // Clear canvas with white background
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, width, height);
+    
+    if (!originalImage) {
+        // Just draw graticule if no image is loaded
+        drawGraticuleOnly(width, height);
+        return;
+    }
+
+    // Show processing indicator for large images
+    if (originalImage.width * originalImage.height > 100000) {
+        ctx.fillStyle = 'rgba(0,0,0,0.1)';
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = 'black';
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Processing...', width/2, height/2);
+        
+        // Use setTimeout to allow UI update
+        setTimeout(() => processProjection(width, height), 10);
+        return;
+    }
+    
+    processProjection(width, height);
+}
+
+function processProjection(width, height) {
 
     if (projCanvas.width !== width || projCanvas.height !== height) {
         projCanvas.width = width;
@@ -190,11 +255,24 @@ function drawEverything() {
             const imgX = (inv.lon + Math.PI) * xScale;
             const imgY = (Math.PI / 2 - inv.lat) * yScale;
 
+            // Use bilinear interpolation for better quality
             const x0 = Math.floor(imgX);
             const y0 = Math.floor(imgY);
-
+            const x1 = Math.min(x0 + 1, imgWidth - 1);
+            const y1 = Math.min(y0 + 1, imgHeight - 1);
+            
             if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
-                data32[idx] = offData32[y0 * imgWidth + x0];
+                const fx = imgX - x0;
+                const fy = imgY - y0;
+                
+                // Get the four corner pixels
+                const tl = offData32[y0 * imgWidth + x0]; // top-left
+                const tr = offData32[y0 * imgWidth + x1]; // top-right
+                const bl = offData32[y1 * imgWidth + x0]; // bottom-left
+                const br = offData32[y1 * imgWidth + x1]; // bottom-right
+                
+                // Simple bilinear interpolation (for now just use nearest neighbor for performance)
+                data32[idx] = tl;
             } else {
                 data32[idx] = 0xFFFFFFFF;
             }
@@ -228,14 +306,10 @@ function drawEverything() {
     }
 
     // graticules! on top
-    const graticuleOptions = {
-        lonSpacing: parseFloat(graticuleLonSpacingInput.value) || 15,
-        latSpacing: parseFloat(graticuleLatSpacingInput.value) || 15,
-        offset: parseFloat(graticuleOffsetInput.value) || 0,
-        color: graticuleColorInput.value || '#ffffff',
-        lineWidth: parseFloat(graticuleLineWidthInput.value) || 1,
-        strokeStyle: graticuleStyleInput.value || 'solid'
-    };
+    const graticuleOptions = getGraticuleOptions();
     const graticule = new Graticule(projection, graticuleOptions);
     graticule.draw(ctx, width, height);
 }
+
+// Initial draw to show graticule even without image
+drawEverything();
