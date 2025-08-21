@@ -239,23 +239,11 @@ function handleFileUpload(e) {
         alert('Please select a valid image file.');
         return;
     }
-    
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-        alert('Image file is too large. Please select a file smaller than 10MB.');
-        return;
-    }
-    
+
     const reader = new FileReader();
     reader.onload = evt => {
         const img = new Image();
-        img.onload = () => {
-            // Validate image dimensions
-            if (img.width > 4096 || img.height > 4096) {
-                alert('Image dimensions are too large. Please use an image smaller than 4096x4096 pixels.');
-                return;
-            }
-            
+        img.onload = () => {            
             originalImage = img;
             offCanvas.width = img.width;
             offCanvas.height = img.height;
