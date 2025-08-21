@@ -54,6 +54,26 @@ let centerLat = 40.71;
 let edgeAngle = 90;
 let projectionType = projectionSelect.value;
 
+// Performance optimization flags
+let isInitialImageLoad = false;
+let lastProjectionState = null;
+
+// Cache for performance optimization
+let projectionCache = {
+    lastParams: null,
+    lastResult: null,
+    canvas: null,
+    ctx: null
+};
+
+// Initialize cache canvas
+function initProjectionCache() {
+    if (!projectionCache.canvas) {
+        projectionCache.canvas = document.createElement('canvas');
+        projectionCache.ctx = projectionCache.canvas.getContext('2d');
+    }
+}
+
 // ─────────── Mouse/Touch interaction for direct coordinate manipulation ─────────────
 let isDragging = false;
 let lastMousePos = { x: 0, y: 0 };
@@ -207,7 +227,7 @@ function debounceDraw() {
             cancelAnimationFrame(animationId);
         }
         animationId = requestAnimationFrame(drawEverything);
-    }, 100);
+    }, 50); // Reduced from 100ms to 50ms for smoother interaction
 }
 
 function handleFileUpload(e) {
@@ -241,6 +261,12 @@ function handleFileUpload(e) {
             offCanvas.height = img.height;
             const offCtx = offCanvas.getContext('2d');
             offCtx.drawImage(originalImage, 0, 0);
+            isInitialImageLoad = true; // Flag for showing processing indicator only on initial load
+            
+            // Clear cache when new image is loaded
+            projectionCache.lastParams = null;
+            projectionCache.sourceData = null;
+            
             drawEverything();
         };
         img.onerror = () => {
@@ -315,8 +341,13 @@ function drawEverything() {
         return;
     }
 
-    // Show processing indicator for large images
-    if (originalImage.width * originalImage.height > 100000) {
+    // Only show processing indicator for initial image load of very large images
+    // or when projection type changes - not for simple parameter changes like center coordinates
+    const currentProjectionState = `${projectionType}-${edgeAngle}`;
+    const isProjectionChange = lastProjectionState && lastProjectionState !== currentProjectionState;
+    const isVeryLargeImage = originalImage.width * originalImage.height > 1000000; // 1MP instead of 100k pixels
+    
+    if ((isInitialImageLoad || isProjectionChange) && isVeryLargeImage) {
         ctx.fillStyle = 'rgba(0,0,0,0.1)';
         ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = 'black';
@@ -325,67 +356,95 @@ function drawEverything() {
         ctx.fillText('Processing...', width/2, height/2);
         
         // Use setTimeout to allow UI update
-        setTimeout(() => processProjection(width, height), 10);
+        setTimeout(() => {
+            processProjection(width, height);
+            isInitialImageLoad = false;
+            lastProjectionState = currentProjectionState;
+        }, 10);
         return;
     }
     
     processProjection(width, height);
+    isInitialImageLoad = false;
+    lastProjectionState = currentProjectionState;
 }
 
 function processProjection(width, height) {
+    initProjectionCache();
 
     if (projCanvas.width !== width || projCanvas.height !== height) {
         projCanvas.width = width;
         projCanvas.height = height;
+        // Clear cache when canvas size changes
+        projectionCache.lastParams = null;
     }
 
     const projection = createProjectionWrapper(projectionType, centerLat, centerLon, edgeAngle);
 
-    // preparing an ImageData buffer for the projected image
-    const output = projCtx.createImageData(width, height);
-    const data32 = new Uint32Array(output.data.buffer);
+    // Check if we can use cached projection data for small movements
+    const currentParams = `${projectionType}-${centerLat.toFixed(3)}-${centerLon.toFixed(3)}-${edgeAngle}-${width}x${height}`;
+    const canUseCache = projectionCache.lastParams === currentParams && projectionCache.lastResult;
+    
+    if (canUseCache) {
+        // Use cached result for same parameters
+        projCtx.putImageData(projectionCache.lastResult, 0, 0);
+    } else {
+        // Compute new projection
+        const output = projCtx.createImageData(width, height);
+        const data32 = new Uint32Array(output.data.buffer);
 
-    const offCtx = offCanvas.getContext('2d');
-    const offImageData = offCtx.getImageData(0, 0, originalImage.width, originalImage.height);
-    const offData32 = new Uint32Array(offImageData.data.buffer);
+        // Cache the source image data to avoid repeated getImageData calls
+        if (!projectionCache.sourceData || projectionCache.sourceWidth !== originalImage.width || projectionCache.sourceHeight !== originalImage.height) {
+            const offCtx = offCanvas.getContext('2d');
+            const offImageData = offCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+            projectionCache.sourceData = new Uint32Array(offImageData.data.buffer);
+            projectionCache.sourceWidth = originalImage.width;
+            projectionCache.sourceHeight = originalImage.height;
+        }
 
-    const imgWidth = originalImage.width;
-    const imgHeight = originalImage.height;
-    const xScale = imgWidth / 360; // degrees to pixels
-    const yScale = imgHeight / 180; // degrees to pixels
+        const offData32 = projectionCache.sourceData;
+        const imgWidth = originalImage.width;
+        const imgHeight = originalImage.height;
+        const xScale = imgWidth / 360; // degrees to pixels
+        const yScale = imgHeight / 180; // degrees to pixels
 
-    // for every pixel in the output canvas, find the corresponding
-    // pixel in the input image and copy the color
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const coords = invertCoordinates(projection, [x, y]);
-            const idx = y * width + x;
+        // for every pixel in the output canvas, find the corresponding
+        // pixel in the input image and copy the color
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const coords = invertCoordinates(projection, [x, y]);
+                const idx = y * width + x;
 
-            if (!coords) {
-                data32[idx] = 0xFFFFFFFF; // white background
-                continue;
-            }
+                if (!coords) {
+                    data32[idx] = 0xFFFFFFFF; // white background
+                    continue;
+                }
 
-            const [lon, lat] = coords;
-            
-            // Convert longitude/latitude to image coordinates
-            // Image coordinates: 0,0 is top-left, lon=[-180,180], lat=[-90,90]
-            const imgX = (lon + 180) * xScale;
-            const imgY = (90 - lat) * yScale; // flip Y axis
+                const [lon, lat] = coords;
+                
+                // Convert longitude/latitude to image coordinates
+                // Image coordinates: 0,0 is top-left, lon=[-180,180], lat=[-90,90]
+                const imgX = (lon + 180) * xScale;
+                const imgY = (90 - lat) * yScale; // flip Y axis
 
-            // Use bilinear interpolation for better quality
-            const x0 = Math.floor(imgX);
-            const y0 = Math.floor(imgY);
-            
-            if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
-                data32[idx] = offData32[y0 * imgWidth + x0];
-            } else {
-                data32[idx] = 0xFFFFFFFF; // white background
+                // Use bilinear interpolation for better quality
+                const x0 = Math.floor(imgX);
+                const y0 = Math.floor(imgY);
+                
+                if (x0 >= 0 && x0 < imgWidth && y0 >= 0 && y0 < imgHeight) {
+                    data32[idx] = offData32[y0 * imgWidth + x0];
+                } else {
+                    data32[idx] = 0xFFFFFFFF; // white background
+                }
             }
         }
-    }
 
-    projCtx.putImageData(output, 0, 0);
+        projCtx.putImageData(output, 0, 0);
+        
+        // Cache the result for potential reuse
+        projectionCache.lastParams = currentParams;
+        projectionCache.lastResult = output;
+    }
 
     // draw the projected image onto the main canvas
     ctx.clearRect(0, 0, width, height);
